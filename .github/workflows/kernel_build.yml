@@ -1,4 +1,4 @@
-name: Build Samsung Galaxy Tab A8 (SM-X200) Android 14 Kernel & Boot Image
+name: Build Kernel
 
 on:
   workflow_dispatch:
@@ -11,219 +11,58 @@ permissions:
 
 jobs:
   build:
-    name: Build A14 Kernel & Package Boot Image
+    name: Build Kernel
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Checkout Kernel Source
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           ref: android-14
-          fetch-depth: 1
 
-      - name: Install Build Dependencies
+      - name: Install Dependencies
         run: |
-          sudo apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=30
-          sudo apt-get install -y -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
-            bc bison flex libssl-dev libelf-dev lz4 python3 python3-pip zip cpio \
-            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libncurses5 libtinfo5 \
-            device-tree-compiler u-boot-tools libyaml-dev pkg-config
+          sudo apt-get update
+          sudo apt-get install -y bc bison flex libssl-dev libelf-dev lz4 python3 zip cpio \
+            gcc-aarch64-linux-gnu libncurses5 libtinfo5 libyaml-dev pkg-config
 
-      - name: Setup Official Android Clang & GCC Toolchains
+      - name: Setup Toolchain
         run: |
-          mkdir -p "$GITHUB_WORKSPACE/toolchains/clang"
-          mkdir -p "$GITHUB_WORKSPACE/toolchains/gcc64"
-          mkdir -p "$GITHUB_WORKSPACE/toolchains/gcc32"
+          mkdir -p toolchain/clang toolchain/gcc
+          curl -sSL "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/android-11.0.0_r3/clang-r383902.tar.gz" | tar -xz -C toolchain/clang
+          curl -sSL "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/android-11.0.0_r3.tar.gz" | tar -xz -C toolchain/gcc
 
-          echo "Downloading Android Clang r383902..."
-          curl -sSL "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/android-11.0.0_r3/clang-r383902.tar.gz" | tar -xz -C "$GITHUB_WORKSPACE/toolchains/clang"
-
-          echo "Downloading Android GCC 4.9 (arm64)..."
-          curl -sSL "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/android-11.0.0_r3.tar.gz" | tar -xz -C "$GITHUB_WORKSPACE/toolchains/gcc64"
-
-          echo "Downloading Android GCC 4.9 (arm32)..."
-          curl -sSL "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9/+archive/android-11.0.0_r3.tar.gz" | tar -xz -C "$GITHUB_WORKSPACE/toolchains/gcc32"
-
-      - name: Build Kernel (Image & DTB)
+      - name: Build Kernel Image
         run: |
-          set -e -x -o pipefail
-
-          export PATH="$GITHUB_WORKSPACE/toolchains/clang/bin:$GITHUB_WORKSPACE/toolchains/gcc64/bin:$GITHUB_WORKSPACE/toolchains/gcc32/bin:$PATH"
+          export PATH="$PWD/toolchain/clang/bin:$PWD/toolchain/gcc/bin:$PATH"
           export ARCH=arm64
           export SUBARCH=arm64
           export CC=clang
           export LD=ld.lld
           export CLANG_TRIPLE=aarch64-linux-gnu-
           export CROSS_COMPILE=aarch64-linux-android-
-          export CROSS_COMPILE_ARM32=arm-linux-androideabi-
           export BSP_BUILD_FAMILY=qogirl6
-          export DTC_OVERLAY_TEST_EXT="$GITHUB_WORKSPACE/tools/mkdtimg/ufdt_apply_overlay"
-          export DTC_OVERLAY_VTS_EXT="$GITHUB_WORKSPACE/tools/mkdtimg/ufdt_verify_overlay_host"
           export BSP_BUILD_ANDROID_OS=y
           export KCFLAGS="-Wno-error"
-          export HOST_EXTRACFLAGS="-DNO_YAML"
-          export HOSTLOADLIBES_dtc="-lyaml"
+          export HOST_LOADLIBES="-lyaml"
 
-          chmod +x "$GITHUB_WORKSPACE"/tools/mkdtimg/* 2>/dev/null || true
+          chmod +x tools/mkdtimg/* 2>/dev/null || true
 
-          rm -rf out
-          mkdir -p out
+          make O=out BSP_BUILD_DT_OVERLAY=y CC=clang LD=ld.lld ARCH=arm64 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- gta8wifi_eur_open_defconfig
+          make -j$(nproc) O=out BSP_BUILD_DT_OVERLAY=y CC=clang LD=ld.lld ARCH=arm64 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- HOST_LOADLIBES="-lyaml" Image
 
-          # Configure with gta8wifi_eur_open_defconfig
-          make -j$(nproc --all) O=out BSP_BUILD_DT_OVERLAY=y CC=clang LD=ld.lld ARCH=arm64 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_ARM32=arm-linux-androideabi- HOST_EXTRACFLAGS="-DNO_YAML" HOSTLOADLIBES_dtc="-lyaml" gta8wifi_eur_open_defconfig
-
-          # Compile Image and DTBs
-          make -j$(nproc --all) O=out BSP_BUILD_DT_OVERLAY=y CC=clang LD=ld.lld ARCH=arm64 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_ARM32=arm-linux-androideabi- HOST_EXTRACFLAGS="-DNO_YAML" HOSTLOADLIBES_dtc="-lyaml" KCFLAGS="-Wno-error" 2>&1 | tee build.log
-
-      - name: Assemble Artifacts
-        run: |
-          mkdir -p artifacts
-          if [ ! -f out/arch/arm64/boot/Image ]; then
-            echo "ERROR: out/arch/arm64/boot/Image not found!" && exit 1
-          fi
-
-          cp out/arch/arm64/boot/Image artifacts/Image
-
-          # Find and copy generated DTB / DTBO files if available
-          find out/arch/arm64/boot/ -name "*.dtb" -o -name "*.dtbo" -o -name "dtb.img" -o -name "dtbo.img" | while read -r f; do
-            cp "$f" artifacts/ 2>/dev/null || true
-          done
-
-          echo "Kernel compiled successfully:"
-          ls -lh artifacts/
-
-      - name: Package AnyKernel3 Flashable Zip
-        run: |
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
-          sed -i 's/device.name1=.*/device.name1=gta8wifi/g' AnyKernel3/anykernel.sh
-          sed -i 's/device.name2=.*/device.name2=SM-X200/g' AnyKernel3/anykernel.sh
-          sed -i 's/device.name3=.*/device.name3=gta8/g' AnyKernel3/anykernel.sh
-          sed -i 's/device.name4=.*/device.name4=ums512/g' AnyKernel3/anykernel.sh
-          sed -i 's/device.name5=.*/device.name5=ums512_25c10/g' AnyKernel3/anykernel.sh
-          sed -i 's|block=.*|block=/dev/block/by-name/boot;|g' AnyKernel3/anykernel.sh
-          sed -i 's/is_slot_device=.*/is_slot_device=0;/g' AnyKernel3/anykernel.sh
-          sed -i 's/ramdisk_compression=.*/ramdisk_compression=auto;/g' AnyKernel3/anykernel.sh
-
-          cp artifacts/Image AnyKernel3/Image
-          if [ -f artifacts/dtb.img ]; then
-            cp artifacts/dtb.img AnyKernel3/dtb.img
-          elif [ -f artifacts/ums512.dtb ]; then
-            cp artifacts/ums512.dtb AnyKernel3/dtb
-          fi
-
-          if [ -f artifacts/dtbo.img ]; then
-            cp artifacts/dtbo.img AnyKernel3/dtbo.img
-          fi
-
-          cd AnyKernel3
-          zip -r9 ../artifacts/AnyKernel3-gta8wifi-A14.zip * -x .git README.md
-          cd ..
-
-      - name: Package Flashable boot.img with mkbootimg
-        run: |
-          # Fetch LineageOS mkbootimg tools
-          curl -sL https://raw.githubusercontent.com/LineageOS/android_system_tools_mkbootimg/lineage-21.0/mkbootimg.py -o mkbootimg.py 2>/dev/null || \
-          curl -sL https://raw.githubusercontent.com/LineageOS/android_system_tools_mkbootimg/lineage-18.1/mkbootimg.py -o mkbootimg.py
-
-          # Locate DTB
-          DTB_ARG=""
-          if [ -f "artifacts/dtb.img" ]; then
-            DTB_ARG="--dtb artifacts/dtb.img"
-          elif [ -f "artifacts/ums512.dtb" ]; then
-            DTB_ARG="--dtb artifacts/ums512.dtb"
-          elif [ -f "prebuilts/dtb.img" ]; then
-            DTB_ARG="--dtb prebuilts/dtb.img"
-          fi
-
-          # Prepare empty ramdisk if no ramdisk supplied (Header v2 boot partition)
-          touch empty_ramdisk
-          RAMDISK_ARG="--ramdisk empty_ramdisk"
-          if [ -f "prebuilts/ramdisk.cpio" ]; then
-            RAMDISK_ARG="--ramdisk prebuilts/ramdisk.cpio"
-          fi
-
-          CMDLINE="console=ttyS1,115200n8"
-
-          # Package Header Version 2 Boot Image
-          python3 mkbootimg.py \
-            --kernel artifacts/Image \
-            $RAMDISK_ARG \
-            $DTB_ARG \
-            --base 0x00000000 \
-            --pagesize 2048 \
-            --header_version 2 \
-            --cmdline "$CMDLINE" \
-            --os_version 14.0.0 \
-            --os_patch_level 2025-08 \
-            -o artifacts/boot.img
-
-          if [ ! -s "artifacts/boot.img" ]; then
-            echo "ERROR: Failed to produce artifacts/boot.img!" && exit 1
-          fi
-
-          echo "Generated flashable boot.img successfully:"
-          ls -lh artifacts/boot.img
-
-      - name: Extract & Display Build Errors
-        if: failure()
-        run: |
-          mkdir -p build_logs
-          echo "### ❌ Build Failed — Error Summary" >> $GITHUB_STEP_SUMMARY
-          echo '```text' >> $GITHUB_STEP_SUMMARY
-          if [ -f build.log ]; then
-            grep -iE "error:|fatal error:|recipe for target.*failed" build.log | tail -n 50 > build_logs/errors_summary.txt || true
-            cat build_logs/errors_summary.txt >> $GITHUB_STEP_SUMMARY
-            gzip -c build.log > build_logs/build.log.gz
-          else
-            echo "No build.log found" > build_logs/errors_summary.txt
-            cat build_logs/errors_summary.txt >> $GITHUB_STEP_SUMMARY
-          fi
-          echo '```' >> $GITHUB_STEP_SUMMARY
-
-      - name: Upload Build Log Artifacts on Failure
-        if: failure()
+      - name: Upload Kernel Image
         uses: actions/upload-artifact@v4
         with:
-          name: build-failure-logs
-          path: build_logs/
-          retention-days: 1
+          name: kernel-Image
+          path: out/arch/arm64/boot/Image
 
-      - name: Upload Artifacts
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: SM-X200-A14-Kernel-Artifacts
-          path: |
-            artifacts/boot.img
-            artifacts/Image
-            artifacts/AnyKernel3-gta8wifi-A14.zip
-            build.log
-          retention-days: 7
-
-      - name: Create GitHub Release
+      - name: Create Release
         uses: softprops/action-gh-release@v2
         if: success()
         with:
-          tag_name: gta8wifi-A14-Kernel-v${{ github.run_number }}
-          name: Samsung Galaxy Tab A8 (SM-X200) Android 14 Kernel Build #${{ github.run_number }}
-          body: |
-            ## Samsung Galaxy Tab A8 (SM-X200 / gta8wifi) Android 14 Kernel Build #${{ github.run_number }}
-
-            - **SoC**: Unisoc Tiger T618 (`ums512` / `sharkl5Pro` / `qogirl6`)
-            - **Kernel Version**: Linux 4.14.199
-            - **Target OS**: Android 14 (One UI 6 / AOSP 14)
-            - **Defconfig**: `gta8wifi_eur_open_defconfig`
-            - **Branch**: `${{ github.ref_name }}`
-            - **Commit**: `${{ github.sha }}`
-            - **Toolchains**: Google AOSP Clang r383902 (11.0.1) + GCC 4.9 binutils
-
-            ### Flashable Artifacts:
-            - **`boot.img`**: Flashable Fastboot boot image (`fastboot flash boot boot.img`).
-            - **`Image`**: Raw uncompressed ARM64 kernel binary.
-            - **`AnyKernel3-gta8wifi-A14.zip`**: Flashable zip for custom recoveries (TWRP / OrangeFox).
-          files: |
-            artifacts/boot.img
-            artifacts/Image
-            artifacts/AnyKernel3-gta8wifi-A14.zip
+          tag_name: kernel-build-${{ github.run_number }}
+          name: Kernel Build #${{ github.run_number }}
+          files: out/arch/arm64/boot/Image
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
