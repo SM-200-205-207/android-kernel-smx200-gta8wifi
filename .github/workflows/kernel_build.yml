@@ -27,7 +27,7 @@ jobs:
           sudo apt-get install -y -o Acquire::Retries=3 -o Acquire::http::Timeout=30 \
             bc bison flex libssl-dev libelf-dev lz4 python3 python3-pip zip cpio \
             gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi libncurses5 libtinfo5 \
-            device-tree-compiler u-boot-tools
+            device-tree-compiler u-boot-tools libyaml-dev pkg-config
 
       - name: Setup Official Android Clang & GCC Toolchains
         run: |
@@ -61,6 +61,8 @@ jobs:
           export DTC_OVERLAY_VTS_EXT="$GITHUB_WORKSPACE/tools/mkdtimg/ufdt_verify_overlay_host"
           export BSP_BUILD_ANDROID_OS=y
           export KCFLAGS="-Wno-error"
+          export HOST_EXTRACFLAGS="-DNO_YAML"
+          export HOSTLOADLIBES_dtc="-lyaml"
 
           chmod +x "$GITHUB_WORKSPACE"/tools/mkdtimg/* 2>/dev/null || true
 
@@ -68,10 +70,10 @@ jobs:
           mkdir -p out
 
           # Configure with gta8wifi_eur_open_defconfig
-          make -j$(nproc --all) O=out BSP_BUILD_DT_OVERLAY=y CC=clang LD=ld.lld ARCH=arm64 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_ARM32=arm-linux-androideabi- gta8wifi_eur_open_defconfig
+          make -j$(nproc --all) O=out BSP_BUILD_DT_OVERLAY=y CC=clang LD=ld.lld ARCH=arm64 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_ARM32=arm-linux-androideabi- HOST_EXTRACFLAGS="-DNO_YAML" HOSTLOADLIBES_dtc="-lyaml" gta8wifi_eur_open_defconfig
 
           # Compile Image and DTBs
-          make -j$(nproc --all) O=out BSP_BUILD_DT_OVERLAY=y CC=clang LD=ld.lld ARCH=arm64 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_ARM32=arm-linux-androideabi- KCFLAGS="-Wno-error" 2>&1 | tee build.log
+          make -j$(nproc --all) O=out BSP_BUILD_DT_OVERLAY=y CC=clang LD=ld.lld ARCH=arm64 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- CROSS_COMPILE_ARM32=arm-linux-androideabi- HOST_EXTRACFLAGS="-DNO_YAML" HOSTLOADLIBES_dtc="-lyaml" KCFLAGS="-Wno-error" 2>&1 | tee build.log
 
       - name: Assemble Artifacts
         run: |
