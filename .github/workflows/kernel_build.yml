@@ -1,0 +1,68 @@
+name: Build Kernel
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - android-14
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Kernel
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: android-14
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison flex libssl-dev libelf-dev lz4 python3 zip cpio \
+            gcc-aarch64-linux-gnu libncurses5 libtinfo5 libyaml-dev pkg-config
+
+      - name: Setup Toolchain
+        run: |
+          mkdir -p toolchain/clang toolchain/gcc
+          curl -sSL "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/android-11.0.0_r3/clang-r383902.tar.gz" | tar -xz -C toolchain/clang
+          curl -sSL "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/android-11.0.0_r3.tar.gz" | tar -xz -C toolchain/gcc
+
+      - name: Build Kernel Image
+        run: |
+          export PATH="$PWD/toolchain/clang/bin:$PWD/toolchain/gcc/bin:$PATH"
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export CC=clang
+          export LD=ld.lld
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+          export CROSS_COMPILE=aarch64-linux-android-
+          export BSP_BUILD_FAMILY=qogirl6
+          export BSP_BUILD_ANDROID_OS=y
+          export KCFLAGS="-Wno-error"
+          export HOST_LOADLIBES="-lyaml"
+
+          chmod +x tools/mkdtimg/* 2>/dev/null || true
+
+          make O=out BSP_BUILD_DT_OVERLAY=y CC=clang LD=ld.lld ARCH=arm64 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- gta8wifi_eur_open_defconfig
+          make -j$(nproc) O=out BSP_BUILD_DT_OVERLAY=y CC=clang LD=ld.lld ARCH=arm64 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- HOST_LOADLIBES="-lyaml" Image
+
+      - name: Upload Kernel Image
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-Image
+          path: out/arch/arm64/boot/Image
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        if: success()
+        with:
+          tag_name: kernel-build-${{ github.run_number }}
+          name: Kernel Build #${{ github.run_number }}
+          files: out/arch/arm64/boot/Image
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
