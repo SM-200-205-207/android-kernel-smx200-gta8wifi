@@ -134,11 +134,8 @@ jobs:
           split_boot;
           flash_boot;
 
-          # Flash DTBO partition
-          flash_generic dtbo;
-
           ui_print " ";
-          ui_print "-> Kernel & DTBO installed successfully!";
+          ui_print "-> Kernel installed successfully!";
           ui_print "==========================================";
           EOF
 
@@ -146,10 +143,8 @@ jobs:
           sed -i 's|touch /apex/apexak3;|export PATH="$AKHOME/tools:$AKHOME/bin:$PATH";\n  touch /apex/apexak3;|' anykernel/META-INF/com/google/android/update-binary
           sed -i 's|ash anykernel.sh;|export PATH="$AKHOME/tools:$AKHOME/bin:$PATH";\n$AKHOME/tools/busybox ash anykernel.sh \|\| $AKHOME/bin/ash anykernel.sh \|\| sh anykernel.sh;|' anykernel/META-INF/com/google/android/update-binary
 
-          # Copy kernel image, dtb, and dtbo
+          # Copy only kernel Image (preserve device working DTB and DTBO partitions)
           cp out/arch/arm64/boot/Image anykernel/Image
-          cp out/dtb.img anykernel/dtb
-          cp out/dtbo.img anykernel/dtbo.img
 
           # Package flashable zip
           cd anykernel
