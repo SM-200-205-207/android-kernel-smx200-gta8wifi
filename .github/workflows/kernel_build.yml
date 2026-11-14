@@ -116,7 +116,7 @@ jobs:
         if: success()
         with:
           tag_name: kernel-build-${{ github.run_number }}
-          name: Kernel Build #${{ github.run_number }}
+          name: "Kernel Build #${{ github.run_number }}"
           files: |
             out/arch/arm64/boot/Image
             out/dtb.img
