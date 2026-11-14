@@ -60,6 +60,37 @@ jobs:
             --id=0x2100 out/arch/arm64/boot/dts/sprd/ums512-2h10-overlay.dtbo \
             --id=0x1100 out/arch/arm64/boot/dts/sprd/ums512-wifionly-overlay.dtbo
 
+      - name: Package AnyKernel3
+        run: |
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3 anykernel
+
+          # Configure anykernel.sh for Samsung Galaxy Tab A8 Wi-Fi (SM-X200)
+          sed -i 's/kernel.string=.*/kernel.string=LineageOS Kernel for Samsung Galaxy Tab A8 (gta8wifi)/' anykernel/anykernel.sh
+          sed -i 's/device.name1=.*/device.name1=gta8wifi/' anykernel/anykernel.sh
+          sed -i 's/device.name2=.*/device.name2=SM-X200/' anykernel/anykernel.sh
+          sed -i 's/device.name3=.*/device.name3=gta8/' anykernel/anykernel.sh
+          sed -i 's/device.name4=.*/device.name4=ums512/' anykernel/anykernel.sh
+          sed -i 's/device.name5=.*/device.name5=/' anykernel/anykernel.sh
+          sed -i 's|^BLOCK=.*|BLOCK=/dev/block/by-name/boot;\nblock=/dev/block/by-name/boot;|' anykernel/anykernel.sh
+          sed -i 's|^IS_SLOT_DEVICE=.*|IS_SLOT_DEVICE=0;\nis_slot_device=0;|' anykernel/anykernel.sh
+          sed -i 's|^RAMDISK_COMPRESSION=.*|RAMDISK_COMPRESSION=auto;\nramdisk_compression=auto;|' anykernel/anykernel.sh
+
+          # Remove sample/tuna-specific modifications from template
+          sed -i '/# init.rc/,/append_file fstab.tuna/d' anykernel/anykernel.sh
+
+          # Ensure dtbo partition flashing is handled
+          sed -i 's|^write_boot;.*|write_boot;\n\n# Flash DTBO partition\nflash_generic dtbo;|' anykernel/anykernel.sh
+
+          # Copy kernel image, dtb, and dtbo
+          cp out/arch/arm64/boot/Image anykernel/Image
+          cp out/dtb.img anykernel/dtb
+          cp out/dtbo.img anykernel/dtbo.img
+
+          # Package flashable zip
+          cd anykernel
+          zip -r9 ../AnyKernel3-gta8wifi-${{ github.run_number }}.zip * -x .git README.md *placeholder
+          cd ..
+
       - name: Upload Kernel Image
         uses: actions/upload-artifact@v4
         with:
@@ -74,6 +105,12 @@ jobs:
             out/dtb.img
             out/dtbo.img
 
+      - name: Upload AnyKernel3 Flashable Zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: AnyKernel3-gta8wifi-${{ github.run_number }}
+          path: AnyKernel3-gta8wifi-${{ github.run_number }}.zip
+
       - name: Create Release
         uses: softprops/action-gh-release@v2
         if: success()
@@ -84,5 +121,6 @@ jobs:
             out/arch/arm64/boot/Image
             out/dtb.img
             out/dtbo.img
+            AnyKernel3-gta8wifi-${{ github.run_number }}.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
