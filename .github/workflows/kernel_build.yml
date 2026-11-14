@@ -1,0 +1,191 @@
+name: Build Kernel
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - android-14
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Kernel
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: android-14
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison flex libssl-dev libelf-dev lz4 python3 zip cpio \
+            gcc-aarch64-linux-gnu libncurses5 libtinfo5 libyaml-dev pkg-config
+
+      - name: Cache Toolchain
+        id: cache-toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            toolchain/clang
+            toolchain/gcc
+          key: ${{ runner.os }}-toolchain-r383902-gcc4.9
+
+      - name: Setup Toolchain
+        if: steps.cache-toolchain.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p toolchain/clang toolchain/gcc
+
+          echo "Downloading Clang r383902..."
+          curl -fL --retry 5 --retry-delay 5 --retry-connrefused \
+            "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/android-11.0.0_r3/clang-r383902.tar.gz" \
+            -o clang.tar.gz || \
+          wget --retry-connrefused --waitretry=5 --tries=5 \
+            "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/android-11.0.0_r3/clang-r383902.tar.gz" \
+            -O clang.tar.gz
+          tar -xzf clang.tar.gz -C toolchain/clang
+          rm -f clang.tar.gz
+
+          echo "Downloading GCC aarch64 4.9..."
+          curl -fL --retry 5 --retry-delay 5 --retry-connrefused \
+            "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/android-11.0.0_r3.tar.gz" \
+            -o gcc.tar.gz || \
+          wget --retry-connrefused --waitretry=5 --tries=5 \
+            "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/android-11.0.0_r3.tar.gz" \
+            -O gcc.tar.gz
+          tar -xzf gcc.tar.gz -C toolchain/gcc
+          rm -f gcc.tar.gz
+
+      - name: Build Kernel Image
+        run: |
+          export PATH="$PWD/toolchain/clang/bin:$PWD/toolchain/gcc/bin:$PATH"
+          export ARCH=arm64
+          export SUBARCH=arm64
+          export CC=clang
+          export LD=ld.lld
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+          export CROSS_COMPILE=aarch64-linux-android-
+          export BSP_BUILD_FAMILY=sharkl5Pro
+          export BSP_BUILD_ANDROID_OS=y
+          export KCFLAGS="-Wno-error"
+          export HOST_LOADLIBES="-lyaml"
+
+          chmod +x tools/mkdtimg/* 2>/dev/null || true
+
+          make O=out BSP_BUILD_DT_OVERLAY=y CC=clang LD=ld.lld ARCH=arm64 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- gta8wifi_eur_open_defconfig
+          make -j$(nproc) O=out BSP_BUILD_DT_OVERLAY=y CC=clang LD=ld.lld ARCH=arm64 CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=aarch64-linux-android- HOST_LOADLIBES="-lyaml" Image dtbs
+
+          # Package DTB and DTBO images for AOSP/LineageOS
+          cp out/arch/arm64/boot/dts/sprd/ums512.dtb out/dtb.img
+          ./tools/mkdtimg/mkdtimg create out/dtbo.img --page_size=2048 \
+            --id=0x1100 out/arch/arm64/boot/dts/sprd/ums512-1h10-overlay.dtbo \
+            --id=0x1900 out/arch/arm64/boot/dts/sprd/ums512-1h10_go-overlay.dtbo \
+            --id=0x1100 out/arch/arm64/boot/dts/sprd/ums512-25c10-overlay.dtbo \
+            --id=0x2100 out/arch/arm64/boot/dts/sprd/ums512-2h10-overlay.dtbo \
+            --id=0x1100 out/arch/arm64/boot/dts/sprd/ums512-wifionly-overlay.dtbo
+
+      - name: Package AnyKernel3
+        run: |
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3 anykernel
+
+          # Configure anykernel.sh for Samsung Galaxy Tab A8 (SM-X200 / gta8wifi)
+          cat << 'EOF' | sed 's/^ *//' > anykernel/anykernel.sh
+          ### AnyKernel3 Ramdisk Mod Script
+          ## LineageOS 21 Kernel for Samsung Galaxy Tab A8 10.5 (2021)
+          ## SM-X200 (Wi-Fi) / SM-X205 (LTE) / SM-X207 (LTE) - Unisoc T618 (ums512)
+
+          properties() { '
+          kernel.string=LineageOS Kernel for Samsung Galaxy Tab A8 (gta8wifi)
+          do.devicecheck=0
+          do.modules=0
+          do.systemless=1
+          do.cleanup=1
+          do.cleanuponabort=0
+          device.name1=gta8
+          device.name2=gta8wifi
+          device.name3=gta8lte
+          device.name4=SM-X200
+          device.name5=SM-X205
+          device.name6=SM-X207
+          supported.versions=11-15
+          '; }
+
+          # boot shell variables
+          BLOCK=/dev/block/by-name/boot;
+          IS_SLOT_DEVICE=0;
+          RAMDISK_COMPRESSION=auto;
+          PATCH_VBMETA_FLAG=auto;
+
+          # import functions/variables and setup patching
+          . tools/ak3-core.sh;
+
+          ui_print " ";
+          ui_print "==========================================";
+          ui_print "      LineageOS 21 Kernel for SM-X200     ";
+          ui_print "   Samsung Galaxy Tab A8 10.5 (gta8wifi)  ";
+          ui_print "   Unisoc Tiger T618 (ums512_25c10)       ";
+          ui_print "==========================================";
+
+          # Flash Kernel image to boot (split_boot skips fragile ramdisk repack)
+          split_boot;
+          flash_boot;
+
+          # Flash DTBO partition
+          flash_generic dtbo;
+
+          ui_print " ";
+          ui_print "-> Kernel & DTBO installed successfully!";
+          ui_print "==========================================";
+          EOF
+
+          # Patch update-binary for universal recovery shell & busybox execution
+          sed -i 's|touch /apex/apexak3;|export PATH="$AKHOME/tools:$AKHOME/bin:$PATH";\n  touch /apex/apexak3;|' anykernel/META-INF/com/google/android/update-binary
+          sed -i 's|ash anykernel.sh;|export PATH="$AKHOME/tools:$AKHOME/bin:$PATH";\n$AKHOME/tools/busybox ash anykernel.sh \|\| $AKHOME/bin/ash anykernel.sh \|\| sh anykernel.sh;|' anykernel/META-INF/com/google/android/update-binary
+
+          # Copy kernel image, dtb, and dtbo
+          cp out/arch/arm64/boot/Image anykernel/Image
+          cp out/dtb.img anykernel/dtb
+          cp out/dtbo.img anykernel/dtbo.img
+
+          # Package flashable zip
+          cd anykernel
+          zip -r9 ../AnyKernel3-gta8wifi-${{ github.run_number }}.zip * -x .git README.md
+          cd ..
+
+      - name: Upload Kernel Image
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-Image
+          path: out/arch/arm64/boot/Image
+
+      - name: Upload DTB and DTBO Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-dtb-dtbo
+          path: |
+            out/dtb.img
+            out/dtbo.img
+
+      - name: Upload AnyKernel3 Flashable Zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: AnyKernel3-gta8wifi-${{ github.run_number }}
+          path: AnyKernel3-gta8wifi-${{ github.run_number }}.zip
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        if: success()
+        with:
+          tag_name: kernel-build-${{ github.run_number }}
+          name: "Kernel Build #${{ github.run_number }}"
+          files: |
+            out/arch/arm64/boot/Image
+            out/dtb.img
+            out/dtbo.img
+            AnyKernel3-gta8wifi-${{ github.run_number }}.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
