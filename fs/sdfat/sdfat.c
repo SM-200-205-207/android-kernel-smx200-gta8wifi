@@ -4356,7 +4356,7 @@ static inline void __flush_delayed_meta(struct super_block *sb, s32 sync)
 
 static void sdfat_write_super(struct super_block *sb)
 {
-	int time = 0;
+	int __maybe_unused time = 0;
 
 	__lock_super(sb);
 
@@ -5288,6 +5288,18 @@ static void sdfat_debug_kill_sb(struct super_block *sb)
 }
 #endif /* CONFIG_SDFAT_DBG_IOCTL */
 
+static struct file_system_type exfat_fs_type = {
+	.owner       = THIS_MODULE,
+	.name        = "exfat",
+	.mount       = sdfat_fs_mount,
+#ifdef CONFIG_SDFAT_DBG_IOCTL
+	.kill_sb    = sdfat_debug_kill_sb,
+#else
+	.kill_sb    = kill_block_super,
+#endif /* CONFIG_SDFAT_DBG_IOCTL */
+	.fs_flags    = FS_REQUIRES_DEV,
+};
+
 static struct file_system_type sdfat_fs_type = {
 	.owner       = THIS_MODULE,
 	.name        = "sdfat",
@@ -5342,6 +5354,13 @@ static int __init init_sdfat_fs(void)
 		goto error;
 	}
 
+	err = register_filesystem(&exfat_fs_type);
+	if (err) {
+		pr_err("[SDFAT] failed to register exfat filesystem\n");
+		unregister_filesystem(&sdfat_fs_type);
+		goto error;
+	}
+
 	return 0;
 error:
 	sdfat_uevent_uninit();
@@ -5378,8 +5397,9 @@ static void __exit exit_sdfat_fs(void)
 		sdfat_kset = NULL;
 	}
 
-	sdfat_destroy_inodecache();
+	unregister_filesystem(&exfat_fs_type);
 	unregister_filesystem(&sdfat_fs_type);
+	sdfat_destroy_inodecache();
 
 	fsapi_shutdown();
 }
