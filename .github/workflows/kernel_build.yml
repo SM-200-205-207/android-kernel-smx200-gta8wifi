@@ -61,6 +61,7 @@ jobs:
           rm -f gcc.tar.gz
 
       - name: Build Kernel Image
+        id: build_kernel
         run: |
           export PATH="$PWD/toolchain/clang/bin:$PWD/toolchain/gcc/bin:$PATH"
           export ARCH=arm64
@@ -89,6 +90,7 @@ jobs:
             --id=0x1100 out/arch/arm64/boot/dts/sprd/ums512-wifionly-overlay.dtbo
 
       - name: Package AnyKernel3
+        id: package_anykernel
         run: |
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3 anykernel
 
@@ -153,12 +155,14 @@ jobs:
 
       - name: Upload Kernel Image
         uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: kernel-Image
           path: out/arch/arm64/boot/Image
 
       - name: Upload DTB and DTBO Artifacts
         uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: kernel-dtb-dtbo
           path: |
@@ -167,13 +171,14 @@ jobs:
 
       - name: Upload AnyKernel3 Flashable Zip
         uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: AnyKernel3-gta8wifi-${{ github.run_number }}
           path: AnyKernel3-gta8wifi-${{ github.run_number }}.zip
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
-        if: success()
+        if: steps.package_anykernel.outcome == 'success'
         with:
           tag_name: kernel-build-${{ github.run_number }}
           name: "Kernel Build #${{ github.run_number }}"
