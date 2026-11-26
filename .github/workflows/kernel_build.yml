@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - android-14
+      - lineage-21
 
 permissions:
   contents: write
@@ -18,7 +18,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: android-14
+          ref: lineage-21
 
       - name: Install Dependencies
         run: |
