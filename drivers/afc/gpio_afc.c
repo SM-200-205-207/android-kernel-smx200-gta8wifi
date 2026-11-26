@@ -492,8 +492,19 @@ static ssize_t afc_disable_store(struct device *dev,
 }
 static DEVICE_ATTR(afc_disable, 0664, afc_disable_show, afc_disable_store);
 
+static ssize_t afc_disable_val_show(struct device *dev,
+			struct device_attribute *attr, char *buf)
+{
+	if (!gafc)
+		return sprintf(buf, "0\n");
+	return sprintf(buf, "%d\n", gafc->afc_disable ? 1 : 0);
+}
+static DEVICE_ATTR(afc_disable_val, 0664,
+		   afc_disable_val_show, afc_disable_store);
+
 static struct attribute *afc_attributes[] = {
 	&dev_attr_afc_disable.attr,
+	&dev_attr_afc_disable_val.attr,
 	NULL
 };
 
